@@ -49,7 +49,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="MultipayerPerceptronApp.htm" />
     <None Include="res\MultipayerPerceptronApp.rc2">
       <Filter>Resource Files</Filter>
     </None>
