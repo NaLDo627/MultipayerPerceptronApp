@@ -14,6 +14,8 @@ CMultiPayerPerceptronNetwork::CMultiPayerPerceptronNetwork()
 	m_nHiddenLayerCount = HIDDEN_LAYER_COUNT;
 	m_pHiddenLayers = NULL;
 	m_pOutputLayer = NULL;
+	m_nEpoch = 0;
+	m_bIsTrained = FALSE;
 }
 
 CMultiPayerPerceptronNetwork::~CMultiPayerPerceptronNetwork()
@@ -31,6 +33,12 @@ INT CMultiPayerPerceptronNetwork::Run(const CHAR* a_pszLearningFile, const UINT3
 
 INT CMultiPayerPerceptronNetwork::Run(const UINT32* a_pInputPattern, UINT32* a_pOutputPattern)
 {
+	if(!m_bIsTrained)
+		return -1;
+}
+
+INT CMultiPayerPerceptronNetwork::Train()
+{
 	// Step 1. 패턴이 학습되었는지 확인
 	if(!m_ppPatterns)
 		return -1;
@@ -40,15 +48,29 @@ INT CMultiPayerPerceptronNetwork::Run(const UINT32* a_pInputPattern, UINT32* a_p
 		return -1;
 
 	// Step 3. 히든 레이어 설정한다.
-	setHiddenLayer();
+	setNeuranLayer();
 
 	// Step 4. 평가 기준에 부합되거나 최대 반복횟수까지 반복한다.
 	for(int nEpoch = 0; nEpoch < MAXIMUM_EPOCH; nEpoch++)
 	{
-		
+		for(int i = 0; i < m_nOutputNodeCount; i++)
+		{
+			// 순전파
+			ASSERT(PropagateForward(i));
+
+			// 역전파
+			ASSERT(PropagateBackward(i));
+		}
+
+		if(Evaluate())
+		{
+			m_nEpoch = nEpoch;
+			m_bIsTrained = true;
+			return nEpoch;
+		}
 	}
 
-	// 일치되는 패턴이 없다면 -2 리턴
+	// 학습이 없다면 -2 리턴
 	return -2;
 }
 
@@ -67,9 +89,9 @@ BOOL CMultiPayerPerceptronNetwork::InitializeNetwork()
 		return FALSE;
 
 	m_pInputPattern = new UINT32[m_nPatternAryLength];
-	ZeroMemory(m_pInputPattern, m_nPatternAryLength << 5);
+	ZeroMemory(m_pInputPattern, m_nPatternAryLength << 2);
 	m_pOutputPattern = new UINT32[m_nPatternAryLength];
-	ZeroMemory(m_pOutputPattern, m_nPatternAryLength << 5);
+	ZeroMemory(m_pOutputPattern, m_nPatternAryLength << 2);
 
 	return TRUE;
 }
@@ -128,7 +150,7 @@ BOOL CMultiPayerPerceptronNetwork::ReadPatternFile(const CHAR* a_pszFileName)
 	for(int i = 0; i < nInputPatternCount; i++)
 	{
 		m_ppPatterns[i] = new UINT32[nInputPatternAryLength];
-		ZeroMemory(m_ppPatterns[i], nInputPatternAryLength << 5);
+		ZeroMemory(m_ppPatterns[i], nInputPatternAryLength << 2);
 	}
 
 	// Step 3. 파일 포인터를 초기화 한 후 파일을 읽어온다.
@@ -179,8 +201,9 @@ BOOL CMultiPayerPerceptronNetwork::ReadPatternFile(const CHAR* a_pszFileName)
 	return TRUE;
 }
 
-VOID CMultiPayerPerceptronNetwork::setHiddenLayer()
+VOID CMultiPayerPerceptronNetwork::setNeuranLayer()
 {
+	// 은닉층 설정
 	if(m_pHiddenLayers)
 		delete m_pHiddenLayers;
 
@@ -195,17 +218,24 @@ VOID CMultiPayerPerceptronNetwork::setHiddenLayer()
 			m_pHiddenLayers[i].makeNodeLayer(m_nHiddenNodeCount, nPrevNodeCount);
 			nPrevNodeCount = m_nHiddenNodeCount;
 		}
-		return;
 	}
-	
-	for(int i = 0; i < m_nHiddenLayerCount; i++)
+	else
 	{
-		m_pHiddenLayers[i].makeNodeLayer(m_pHiddenNodeCounts[i], nPrevNodeCount);
-		nPrevNodeCount = m_nHiddenNodeCount;
+		for(int i = 0; i < m_nHiddenLayerCount; i++)
+		{
+			m_pHiddenLayers[i].makeNodeLayer(m_pHiddenNodeCounts[i], nPrevNodeCount);
+			nPrevNodeCount = m_nHiddenNodeCount;
+		}
 	}
+
+	// 출력층 설정
+	if(m_pOutputLayer)
+		delete m_pOutputLayer;
+
+	m_pOutputLayer = new CNeuranLayer(m_nOutputNodeCount, nPrevNodeCount);
 }
 
-VOID CMultiPayerPerceptronNetwork::setHiddenLayer(INT a_nLayerCount, INT a_nNodeCount)
+VOID CMultiPayerPerceptronNetwork::setNeuranLayer(INT a_nLayerCount, INT a_nNodeCount)
 {
 	m_nHiddenLayerCount = a_nLayerCount;
 	m_nHiddenNodeCount = a_nNodeCount;
@@ -213,10 +243,10 @@ VOID CMultiPayerPerceptronNetwork::setHiddenLayer(INT a_nLayerCount, INT a_nNode
 		delete m_pHiddenNodeCounts;
 	m_pHiddenNodeCounts = NULL;
 
-	setHiddenLayer();
+	setNeuranLayer();
 }
 
-VOID CMultiPayerPerceptronNetwork::setHiddenLayer(INT a_nLayerCount, INT* a_pNodeCountArray)
+VOID CMultiPayerPerceptronNetwork::setNeuranLayer(INT a_nLayerCount, INT* a_pNodeCountArray)
 {
 	m_nHiddenLayerCount = a_nLayerCount;
 	m_pHiddenNodeCounts = new INT[a_nLayerCount];
@@ -235,13 +265,13 @@ VOID CMultiPayerPerceptronNetwork::setHiddenLayer(INT a_nLayerCount, INT* a_pNod
 
 	m_nHiddenNodeCount = 0;
 
-	setHiddenLayer();
+	setNeuranLayer();
 }
 
-INT CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
+BOOL CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
 {
 	if(!m_ppPatterns || !m_pHiddenLayers)
-		return -1;
+		return FALSE;
 
 	const UINT32* pInputPattern = m_ppPatterns[a_nPatternIndex];
 
@@ -303,6 +333,8 @@ INT CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
 
 		pNode->setInputVal(dInputValue);
 	}
+
+	return TRUE;
 }
 
 INT CMultiPayerPerceptronNetwork::PropagateBackward(INT a_nPatternIndex)
@@ -310,120 +342,46 @@ INT CMultiPayerPerceptronNetwork::PropagateBackward(INT a_nPatternIndex)
 	if(!m_ppPatterns)
 		return -1;
 
-	DOUBLE** ppDeltas = NULL;
 	const UINT32 unTeachingBit = 0x80000000 >> a_nPatternIndex;
 	const UINT32* pInputPattern = m_ppPatterns[a_nPatternIndex];
 
-	// Step 1. 출력층 델타 값 계산
-	CNeuranNode* pNode = NULL;
-	INT nNodeCount = m_pOutputLayer->getNodeCount();
-	ppDeltas = new DOUBLE*[m_nHiddenLayerCount + 1];
+	// Step 1. 은닉층 -> 출력층 델타 값 계산
+	m_pOutputLayer->setOutputDelta(unTeachingBit, m_nOutputNodeCount);
 
-	ppDeltas[m_nHiddenLayerCount] = new DOUBLE[nNodeCount];
-	for(int i = 0; i < nNodeCount; i++)
+	// Step 2. 은닉층 델타 값 계산 
+	CNeuranLayer* pUpperLayer = m_pOutputLayer;
+	for(int nLevel = m_nHiddenLayerCount - 1; nLevel >= 0; nLevel--)
 	{
-		pNode = m_pOutputLayer->getNode(i);
-		DOUBLE dOutputVal = pNode->getOutputVal();
-		UINT32 nBlock = 0x80000000 >> i;
-		INT	nBit = !!(unTeachingBit & nBlock);
-		ppDeltas[m_nHiddenLayerCount][i] = dOutputVal * (DOUBLE(1) - dOutputVal) * (DOUBLE(nBit) - dOutputVal);
+		m_pHiddenLayers[nLevel].setHiddenDelta(pUpperLayer);
+		pUpperLayer = &(m_pHiddenLayers[nLevel]);
 	}
 
-	// Step 2. 출력층 가중치 수정
-	CNeuranLayer* pPrevLayer = &(m_pHiddenLayers[m_nHiddenLayerCount - 1]);
-	for(int i = 0; i < nNodeCount; i++)
+	// Step 3. 출력층 가중치 수정
+	m_pOutputLayer->RecalibrateWeight(&(m_pHiddenLayers[m_nHiddenLayerCount-1]));
+
+	// Step 4. 은닉층 가중치 수정
+	for(int nLevel = m_nHiddenLayerCount - 1; nLevel > 0; nLevel--)
+		m_pHiddenLayers[nLevel].RecalibrateWeight(&(m_pHiddenLayers[nLevel - 1]));
+	m_pHiddenLayers[0].RecalibrateWeight(pInputPattern, m_nPatternLength);
+
+	return TRUE;
+}
+
+BOOL CMultiPayerPerceptronNetwork::Evaluate()
+{
+	DOUBLE dMaxErrorDiffValue = 0;
+
+	for(int i = 0; i < m_nHiddenLayerCount; i++)
 	{
-		INT nPrevCount = pPrevLayer->getNodeCount();
-		for(int j = 0; j < nPrevCount; j++)
-		{
-			CNeuranNode* pPrevNode = pPrevLayer->getNode(i);
-			DOUBLE dOldWeight = m_pOutputLayer->getWeight(j, i);
-			DOUBLE dNewWeight = dOldWeight + INITIAL_ETA * ppDeltas[m_nHiddenLayerCount][i] * pPrevNode->getOutputVal();
-			m_pOutputLayer->setWeight(j, i, dNewWeight);
-		}
+		if(dMaxErrorDiffValue < m_pHiddenLayers[i].getMaxWeightDiff())
+			dMaxErrorDiffValue = m_pHiddenLayers[i].getMaxWeightDiff();
 	}
-
-
-	// Step 3. N번째 은닉층 델타 값 계산 & 가중치 수정
-	INT nPrevNodeCount = nNodeCount;
-	if(m_nHiddenLayerCount > 1)
-	{
-		for(int nLevel = m_nHiddenLayerCount - 1; nLevel > 0; nLevel++)
-		{
-			// 델타 계산
-			nNodeCount = m_pHiddenLayers[nLevel].getNodeCount();
-			ppDeltas[nLevel] = new DOUBLE[nNodeCount];
-			for(int i = 0; i < nNodeCount; i++)
-			{
-				pNode = m_pHiddenLayers[nLevel].getNode(i);
-				DOUBLE dOutputVal = pNode->getOutputVal();
-				DOUBLE dError = 0;
-				for(int j = 0; j < nPrevNodeCount; j++)
-					dError += ppDeltas[nLevel + 1][j] * m_pHiddenLayers[nLevel].getWeight(j, i);
-				ppDeltas[nLevel][i] = dOutputVal * (DOUBLE(1) - dOutputVal) * dError;
-			}
-
-			// 가중치 수정
-			pPrevLayer = &(m_pHiddenLayers[nLevel - 1]);
-			for(int i = 0; i < nNodeCount; i++)
-			{
-				INT nPrevCount = pPrevLayer->getNodeCount();
-				for(int j = 0; j < nPrevCount; j++)
-				{
-					CNeuranNode* pPrevNode = pPrevLayer->getNode(i);
-					DOUBLE dOldWeight = m_pOutputLayer->getWeight(j, i);
-					DOUBLE dNewWeight = dOldWeight + INITIAL_ETA * ppDeltas[nLevel][i] * pPrevNode->getOutputVal();
-					m_pOutputLayer->setWeight(j, i, dNewWeight);
-				}
-			}
-
-			nPrevNodeCount = nNodeCount;
-		}
-	}
+	if(dMaxErrorDiffValue < m_pOutputLayer->getMaxWeightDiff())
+		dMaxErrorDiffValue = m_pOutputLayer->getMaxWeightDiff();
 	
-
-	// Step 4. 입력층 -> 은닉층 델타값 계산 & 가중치 수정
-	CNeuranLayer* pFirstLayer = &(m_pHiddenLayers[0]);
-	INT nNodeCount = pFirstLayer->getNodeCount();
-	ppDeltas[0] = new DOUBLE[nNodeCount];
-	for(int i = 0; i < nNodeCount; i++)
-	{
-		pNode = pFirstLayer->getNode(i);
-		DOUBLE dOutputVal = pNode->getOutputVal();
-		DOUBLE dError = 0;
-		for(int j = 0; j < nPrevNodeCount; j++)
-			dError += ppDeltas[1][j] * pFirstLayer->getWeight(j, i);
-		ppDeltas[0][i] = dOutputVal * (DOUBLE(1) - dOutputVal) * dError;
-	}
-
-	for(int i = 0; i < nNodeCount; i++)
-	{
-		INT nPrevCount = m_nPatternLength;
-		for(int j = 0; j < nPrevCount; j++)
-		{
-			INT nMainI = j >> 5;
-			INT nSubI = j & 0x1f;
-			UINT32 nBlock = 0x80000000 >> nSubI;
-			INT nBit = !!(pInputPattern[nMainI] & nBlock);
-			DOUBLE dOldWeight = m_pOutputLayer->getWeight(j, i);
-			DOUBLE dNewWeight = dOldWeight + INITIAL_ETA * ppDeltas[0][i] * DOUBLE(nBit);
-		}
-
-		{
-			CNeuranNode* pPrevNode = pPrevLayer->getNode(i);
-			DOUBLE dOldWeight = m_pOutputLayer->getWeight(j, i);
-			DOUBLE dNewWeight = dOldWeight + INITIAL_ETA * ppDeltas[m_nHiddenLayerCount][i] * pPrevNode->getOutputVal();
-			m_pOutputLayer->setWeight(j, i, dNewWeight);
-		}
-	}
-
-	if(ppDeltas)
-	{
-		for(int i = 0; i < m_nHiddenLayerCount + 1; i++)
-			delete ppDeltas[i];
-		delete ppDeltas;
-	}
-
+	if(dMaxErrorDiffValue > ERROR_ALLOWED_VAL)
+		return FALSE;
+	return TRUE;
 }
 
 VOID CMultiPayerPerceptronNetwork::ResetNetwork()
@@ -431,8 +389,10 @@ VOID CMultiPayerPerceptronNetwork::ResetNetwork()
 	m_unTeachingNode = 0;
 	m_nOutputNodeCount = 0;
 	m_nPatternAryLength = 0;
+	m_nEpoch = 0;
 	m_nHiddenNodeCount = HIDDEN_NODE_COUNT;
 	m_nHiddenLayerCount = HIDDEN_LAYER_COUNT;
+	m_bIsTrained = FALSE;
 
 	if(m_ppPatterns)
 	{

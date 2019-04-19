@@ -1,1 +1,10 @@
+/CheckersAI/AI
+/CheckersAI/Release
+/CheckersAI/Debug
+/Release
 /.vs
+/Debug
+/CheckersAI/*.aps
+/MultipayerPerceptronApp/Debug
+/MultipayerPerceptronApp/MultipayerPerceptronApp.vcxproj.user
+/MultipayerPerceptronApp/MultipayerPerceptronApp.aps
