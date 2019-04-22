@@ -52,6 +52,7 @@
     <None Include="res\MultipayerPerceptronApp.rc2">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="MultipayerPerceptronApp.htm" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="MultipayerPerceptronApp.rc">

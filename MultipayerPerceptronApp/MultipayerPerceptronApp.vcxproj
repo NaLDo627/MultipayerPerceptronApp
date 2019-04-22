@@ -205,6 +205,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="MultipayerPerceptronApp.htm">
+      <DeploymentContent>true</DeploymentContent>
+    </None>
     <None Include="res\MultipayerPerceptronApp.rc2" />
   </ItemGroup>
   <ItemGroup>

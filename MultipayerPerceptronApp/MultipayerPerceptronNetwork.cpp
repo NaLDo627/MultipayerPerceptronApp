@@ -14,8 +14,6 @@ CMultiPayerPerceptronNetwork::CMultiPayerPerceptronNetwork()
 	m_nHiddenLayerCount = HIDDEN_LAYER_COUNT;
 	m_pHiddenLayers = NULL;
 	m_pOutputLayer = NULL;
-	m_nEpoch = 0;
-	m_bIsTrained = FALSE;
 }
 
 CMultiPayerPerceptronNetwork::~CMultiPayerPerceptronNetwork()
@@ -23,18 +21,34 @@ CMultiPayerPerceptronNetwork::~CMultiPayerPerceptronNetwork()
 	ResetNetwork();
 }
 
-INT CMultiPayerPerceptronNetwork::Run(const CHAR* a_pszLearningFile, const UINT32* a_pInputPattern, UINT32* a_pOutputPattern)
+INT CMultiPayerPerceptronNetwork::Run(const CHAR* a_pszLearningFile)
 {
 	if(!ReadPatternFile(a_pszLearningFile))
 		return -1;
 
-	return Run(a_pInputPattern, a_pOutputPattern);
+	return Run();
 }
 
-INT CMultiPayerPerceptronNetwork::Run(const UINT32* a_pInputPattern, UINT32* a_pOutputPattern)
+INT CMultiPayerPerceptronNetwork::Run()
 {
-	if(!m_bIsTrained)
-		return -1;
+	PropagateForward(m_pInputPattern);
+
+	for(int i = 0; i < m_nOutputNodeCount; i++)
+	{
+		// output이 0.8 이상이면 연상 성공인 것으로 한다.
+		if(m_pOutputLayer->getNodeOutputVal(i) > DOUBLE(0.8))
+		{
+			// 출력용 노드에 담는다.
+			for(int j = 0; j < m_nPatternAryLength; j++)
+				m_pOutputPattern[j] = m_ppPatterns[i][j];
+
+			return i;
+		}
+			
+	}
+
+	// 패턴 분류에 실패했다면 -1 리턴
+	return -1;
 }
 
 INT CMultiPayerPerceptronNetwork::Train()
@@ -51,27 +65,25 @@ INT CMultiPayerPerceptronNetwork::Train()
 	setNeuranLayer();
 
 	// Step 4. 평가 기준에 부합되거나 최대 반복횟수까지 반복한다.
-	for(int nEpoch = 0; nEpoch < MAXIMUM_EPOCH; nEpoch++)
+	int nEpoch = 0;
+	for(nEpoch = 0; nEpoch < MAXIMUM_EPOCH; nEpoch++)
 	{
 		for(int i = 0; i < m_nOutputNodeCount; i++)
 		{
 			// 순전파
-			ASSERT(PropagateForward(i));
+			ASSERT(PropagateForward(m_ppPatterns[i]));
 
 			// 역전파
 			ASSERT(PropagateBackward(i));
 		}
 
 		if(Evaluate())
-		{
-			m_nEpoch = nEpoch;
-			m_bIsTrained = true;
-			return nEpoch;
-		}
+			break;
 	}
 
 	// 학습이 없다면 -2 리턴
-	return -2;
+	
+	return nEpoch;
 }
 
 BOOL CMultiPayerPerceptronNetwork::InitializeNetwork(const CHAR* a_pszFileName)
@@ -187,6 +199,7 @@ BOOL CMultiPayerPerceptronNetwork::ReadPatternFile(const CHAR* a_pszFileName)
 
 		nMainI++;
 		ZeroMemory(pszBuffer, READ_BUFFER_SIZE);
+		nReadCount = 0;
 	}
 
 	fclose(pFile);
@@ -268,12 +281,12 @@ VOID CMultiPayerPerceptronNetwork::setNeuranLayer(INT a_nLayerCount, INT* a_pNod
 	setNeuranLayer();
 }
 
-BOOL CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
+BOOL CMultiPayerPerceptronNetwork::PropagateForward(const UINT32* a_pPattern)
 {
 	if(!m_ppPatterns || !m_pHiddenLayers)
 		return FALSE;
 
-	const UINT32* pInputPattern = m_ppPatterns[a_nPatternIndex];
+	const UINT32* pInputPattern = a_pPattern;
 
 	// Step 1. 입력층 -> 은닉층 계산 (힌트: 은닉층 관점에서 계산한다고 생각하면 편함)
 	INT nNodeCount = m_pHiddenLayers[0].getNodeCount();
@@ -289,7 +302,7 @@ BOOL CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
 			INT nSubI = j & 0x1f;
 			UINT32 nBlock = 0x80000000 >> nSubI;
 			INT nBit = !!(pInputPattern[nMainI] & nBlock);
-			dInputValue += m_pHiddenLayers[0].getWeight(j, i) * DOUBLE(nBit);
+			dInputValue += m_pHiddenLayers[0].getNode(i)->getWeight(j) * DOUBLE(nBit);
 		}
 
 		pNode->setInputVal(dInputValue);
@@ -310,8 +323,8 @@ BOOL CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
 				DOUBLE dInputValue = 0;
 				INT nPrevNodeCount = pPrevLayer->getNodeCount();
 				for(int j = 0; j < nPrevNodeCount; j++)
-					dInputValue += m_pHiddenLayers[nLevel].getWeight(j, i) * 
-						pPrevLayer->getNode(j)->getOutputVal();
+					dInputValue += m_pHiddenLayers[nLevel].getNode(i)->getWeight(j) * 
+						pPrevLayer->getNodeOutputVal(j);
 
 				pNode->setInputVal(dInputValue);
 			}
@@ -328,8 +341,8 @@ BOOL CMultiPayerPerceptronNetwork::PropagateForward(INT a_nPatternIndex)
 		DOUBLE dInputValue = 0;
 		INT nPrevNodeCount = pPrevLayer->getNodeCount();
 		for(int j = 0; j < nPrevNodeCount; j++)
-			dInputValue += m_pOutputLayer->getWeight(j, i) *
-				pPrevLayer->getNode(j)->getOutputVal();
+			dInputValue += m_pOutputLayer->getNode(i)->getWeight(j) *
+				pPrevLayer->getNodeOutputVal(j);
 
 		pNode->setInputVal(dInputValue);
 	}
@@ -389,35 +402,35 @@ VOID CMultiPayerPerceptronNetwork::ResetNetwork()
 	m_unTeachingNode = 0;
 	m_nOutputNodeCount = 0;
 	m_nPatternAryLength = 0;
-	m_nEpoch = 0;
 	m_nHiddenNodeCount = HIDDEN_NODE_COUNT;
 	m_nHiddenLayerCount = HIDDEN_LAYER_COUNT;
-	m_bIsTrained = FALSE;
 
 	if(m_ppPatterns)
 	{
 		for(int i = 0; i < m_nPatternAryLength; i++)
 			if(m_ppPatterns[i])
-				delete m_ppPatterns[i];
-		delete m_ppPatterns;
+				delete[] m_ppPatterns[i];
+		delete[] m_ppPatterns;
 	}
 	m_ppPatterns = NULL;
 
 	if(!m_pInputPattern)
-		delete m_pInputPattern;
+		delete[] m_pInputPattern;
 	m_pInputPattern = NULL;
 
 	if(!m_pOutputPattern)
-		delete m_pOutputPattern;
+		delete[] m_pOutputPattern;
 	m_pOutputPattern = NULL;
-
-	if(m_pHiddenLayers)
-		delete m_pHiddenLayers;
-	m_pHiddenLayers = NULL;
 
 	if(m_pOutputLayer)
 		delete m_pOutputLayer;
 	m_pOutputLayer = NULL;
+
+	if(m_pHiddenLayers)
+		delete[] m_pHiddenLayers;
+	m_pHiddenLayers = NULL;
+
+	
 }
 
 // 정사각형으로 되어있다고 가정
@@ -448,4 +461,18 @@ INT CMultiPayerPerceptronNetwork::getInputByGrid(INT a_nRow, INT a_nCol)
 	UINT32 nBlock = 0x80000000 >> nSubI;
 
 	return !!(m_pInputPattern[nMainI] & nBlock);
+}
+
+INT CMultiPayerPerceptronNetwork::getOutputByGrid(INT a_nRow, INT a_nCol)
+{
+	if(!m_pOutputPattern)
+		return -1;
+
+	INT nSquareLength = (INT)sqrt(m_nPatternLength);
+	INT nIndex = a_nRow * nSquareLength + a_nCol;
+	INT nMainI = nIndex >> 5;
+	INT nSubI = nIndex & 0x1f;
+	UINT32 nBlock = 0x80000000 >> nSubI;
+
+	return !!(m_pOutputPattern[nMainI] & nBlock);
 }
